@@ -1,0 +1,23 @@
+﻿{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "V_Container",
+	"Description": "A actor component that contains references to other actors, this can be used as a base for inventories, weapon systems, pretty much every thing that handles an array of other actors",
+	"Category": "Other",
+	"CreatedBy": "Vinipi",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "V_Container",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
