@@ -36,6 +36,7 @@ public class V_Container : ModuleRules
 			new string[]
 			{
 				"CoreUObject",
+				"NetCore",
 				"Engine",
 				"Slate",
 				"SlateCore",

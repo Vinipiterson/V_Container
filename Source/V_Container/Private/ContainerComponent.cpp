@@ -1,8 +1,10 @@
 ﻿// Copyright Vinipi, 2025.
 
-
 #include "ContainerComponent.h"
 
+#include "VContainerElementInterface.h"
+#include "GameFramework/Character.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "Net/Core/PushModel/PushModel.h"
 
@@ -12,11 +14,14 @@ UContainerComponent::UContainerComponent()
 	PrimaryComponentTick.bAllowTickOnDedicatedServer = false;
 
 	SetIsReplicatedByDefault(true);
+	Elements.SetNum(Slots);
 }
 
 void UContainerComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	InitializeDefaultElements();
 }
 
 void UContainerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -29,6 +34,16 @@ void UContainerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	Parameters.Condition = COND_None;
 	Parameters.RepNotifyCondition = REPNOTIFY_Always;
 	DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, Elements, Parameters)
+}
+
+void UContainerComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(ThisClass, Slots))
+	{
+		Elements.SetNum(Slots);
+	}
 }
 
 void UContainerComponent::TryAddElement(AActor* Element, int32 InIndex)
@@ -79,6 +94,23 @@ void UContainerComponent::TrySwapElement(int32 OldIndex, int32 NewIndex)
 	}
 }
 
+void UContainerComponent::TrySetSlots(int32 NewSlots)
+{
+	if (GetOwnerRole() >= ROLE_Authority)
+	{
+		TrySetSlots(NewSlots);
+	}
+	else
+	{
+		ServerTrySetSlots(NewSlots);
+	}
+}
+
+void UContainerComponent::NotifyElementUpdated(AActor* Element)
+{
+	OnContainerUpdated.Broadcast();
+}
+
 bool UContainerComponent::HasElement(const AActor* InElement) const
 {
 	if (!InElement) return false;
@@ -86,6 +118,24 @@ bool UContainerComponent::HasElement(const AActor* InElement) const
 	for (const auto& Element : Elements)
 	{
 		if (Element == InElement)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UContainerComponent::HasElementFromClass(TSubclassOf<AActor> InClass) const
+{
+	if (!InClass) return false;
+	
+	for (const auto& Element : Elements)
+	{
+		if (!Element)
+			continue;
+		
+		if (Element->GetClass() == InClass)
 		{
 			return true;
 		}
@@ -102,9 +152,32 @@ AActor* UContainerComponent::GetElement(int32 InIndex) const
 	return Elements[InIndex];
 }
 
+AActor* UContainerComponent::GetElementFromClass(TSubclassOf<AActor> InClass) const
+{
+	if (!InClass) return nullptr;
+	
+	for (const auto& Element : Elements)
+	{
+		if (!Element)
+			continue;
+		
+		if (Element->GetClass() == InClass)
+		{
+			return Element;
+		}
+	}
+
+	return nullptr;
+}
+
 TArray<AActor*> UContainerComponent::GetElements() const
 {
 	return Elements;
+}
+
+int UContainerComponent::GetSlots() const
+{
+	return Slots;
 }
 
 int32 UContainerComponent::GetElementIndex(const AActor* InElement) const
@@ -130,18 +203,28 @@ bool UContainerComponent::TryAddElement_Internal(AActor* Element, int32 InIndex)
 
 	if (InIndex == INDEX_NONE)
 	{
-		if (int Index = FindFirstAvailableIndex() != INDEX_NONE)
+		const int Index = FindFirstAvailableIndex();
+		if (Index != INDEX_NONE)
 		{
 			AddElement(Element, Index);
 			return true;
 		}
 	}
 
-	if (TryRemoveElement_Internal(Elements[InIndex], InIndex))
+	if (IsValid(Elements[InIndex]))
+	{
+		if (TryRemoveElement_Internal(Elements[InIndex], InIndex))
+		{
+			AddElement(Element, InIndex);
+			return true;
+		}
+	}
+	else
 	{
 		AddElement(Element, InIndex);
 		return true;
 	}
+	
 	
 	return false;
 }
@@ -190,9 +273,26 @@ bool UContainerComponent::TrySwapElement_Internal(int32 OldIndex, int32 NewIndex
 	return false;
 }
 
+bool UContainerComponent::TrySetSlots_Internal(int32 NewSlots)
+{
+	if (NewSlots < 1) return false;
+
+	const int RemovedSlots = NewSlots - Slots;
+	if (RemovedSlots > 0)
+	{
+		for (int32 i=Elements.Num()-1; i>Slots; i--)
+		{
+			RemoveElement(i);
+		}
+	}
+	
+	Elements.SetNum(Slots);
+	return true;
+}
+
 AActor* UContainerComponent::AddElement(AActor* Element, int32 InIndex)
 {
-	TArray<AActor*> OldElements = Elements;
+	const TArray<AActor*> OldElements = Elements;
 	
 	Elements[InIndex] = Element;
 	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, Elements, this);
@@ -232,18 +332,51 @@ void UContainerComponent::ServerTrySwapElement_Implementation(int32 OldIndex, in
 	TrySwapElement(OldIndex, NewIndex);
 }
 
+void UContainerComponent::ServerTrySetSlots_Implementation(int32 NewSlots)
+{
+}
+
 void UContainerComponent::OnRep_Elements(TArray<AActor*> OldElements)
 {
-	
+	for (auto Element : Elements)
+	{
+		if (!OldElements.Contains(Element) && Element)
+			IVContainerElementInterface::Execute_AddedToContainer(Element, this);
+	}
+
+	for (auto Element : OldElements)
+	{
+		if (!Elements.Contains(Element) && Element)
+			IVContainerElementInterface::Execute_RemovedFromContainer(Element, this);
+	}
+}
+
+void UContainerComponent::OnRep_Slots(int32 OldSlots)
+{
+
 }
 
 int UContainerComponent::FindFirstAvailableIndex()
 {
-	for (int i = 0; i < Elements.Num(); i++)
+	for (int32 i = 0; i < Elements.Num(); i++)
 	{
-		if (Elements[i]) continue;
+		if (Elements[i])
+			continue;
 
 		return i;
 	}
 	return INDEX_NONE;
+}
+
+void UContainerComponent::InitializeDefaultElements()
+{
+	if (GetOwnerRole() != ROLE_Authority)
+		return;
+
+	for (auto Class : DefaultElements)
+	{
+		AActor* Element = GetWorld()->SpawnActor(Class);
+		if (!TryAddElement_Internal(Element, -1))
+			Element->Destroy();
+	}
 }
