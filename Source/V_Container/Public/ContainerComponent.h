@@ -97,7 +97,7 @@ protected:
 	void ServerTrySetSlots(int32 NewSlots);
 	
 	UFUNCTION()
-	void OnRep_Elements(TArray<AActor*> OldElements);
+	virtual void OnRep_Elements(TArray<AActor*> OldElements);
 	UFUNCTION()
 	void OnRep_Slots(int32 OldSlots);
 
